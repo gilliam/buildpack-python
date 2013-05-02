@@ -14,8 +14,10 @@ export PATH=:/usr/local/bin:$PATH
 BIN_DIR=$(cd $(dirname $0); pwd) # absolute path
 ROOT_DIR=$(dirname $BIN_DIR)
 BUILD_DIR=$1
+CACHE_DIR=$2
 
 PROFILE_PATH="$BUILD_DIR/.profile"
+CACHED_DIRS=".heroku"
 
 # Python version. This will be used in the future to specify custom Pythons.
 DEFAULT_PYTHON_VERSION="python-2.7.3"
@@ -54,9 +56,14 @@ if [ ! -f runtime.txt ]; then
   echo $DEFAULT_PYTHON_VERSION > runtime.txt
 fi
 
+# Copy over cached artifacts.
+for dir in "$CACHED_DIRS"; do
+  cp -R $CACHE_DIR/$dir . &> /dev/null || true
+done
+
 set +e
 # Create set-aside `.heroku` folder.
-mkdir .heroku &> /dev/null
+mkdir .heroku &> /dev/null || true
 set -e
 
 mkdir -p $(dirname $PROFILE_PATH)
@@ -65,14 +72,18 @@ set +e
 PYTHON_VERSION=$(cat runtime.txt)
 
 # Install Python.
-puts-step "Preparing Python runtime ($PYTHON_VERSION)"
-curl http://envy-versions.s3.amazonaws.com/$PYTHON_VERSION.tar.bz2 -s | tar jx &> /dev/null
-if [[ $? != 0 ]] ; then
-  puts-warn "Requested runtime ($PYTHON_VERSION) was not found."
-  puts-warn "Aborting.  More info: https://devcenter.heroku.com/articles/python-support"
-  exit 1
+if ! [ -d "$BUILD_DIR/.heroku/python" ]; then
+  puts-step "Preparing Python runtime ($PYTHON_VERSION)"
+  curl http://envy-versions.s3.amazonaws.com/$PYTHON_VERSION.tar.bz2 -s | tar jx &> /dev/null
+  if [[ $? != 0 ]] ; then
+    puts-warn "Requested runtime ($PYTHON_VERSION) was not found."
+    puts-warn "Aborting.  More info: https://devcenter.heroku.com/articles/python-support"
+    exit 1
+  fi
+  mv python .heroku/python
+else
+  puts-step "Using cached Python runtime ($PYTHON_VERSION)"
 fi
-mv python .heroku/python
 
 # Record for future reference.
 WORKING_DIR=$(pwd)
@@ -103,6 +114,12 @@ pip install --use-mirrors -r requirements.txt --exists-action=w --src=./.heroku/
 
 # ### Finalize
 #
+
+# Store new artifacts in cache.
+for dir in $CACHED_DIRS; do
+  rm -rf $CACHE_DIR/$dir
+  cp -R $dir $CACHE_DIR/
+done
 
 # Set context environment variables.
 set-env PATH '$HOME/.heroku/python/bin:$PATH'
